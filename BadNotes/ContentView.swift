@@ -201,6 +201,8 @@ struct PDFNoteView: UIViewRepresentable {
         var canvases: [Int: PKCanvasView] = [:]
         private var offsetObs: NSKeyValueObservation?
         private var lastY: CGFloat = 0
+        private var lastToggle: CFTimeInterval = 0
+        private var barHidden = false
 
         init(pdfURL: URL, onPage: @escaping (Int, Int) -> Void, onScrollHide: @escaping (Bool) -> Void) {
             self.pdfURL = pdfURL
@@ -221,6 +223,8 @@ struct PDFNoteView: UIViewRepresentable {
             guard let view = pdfView else { return }
             NotificationCenter.default.addObserver(self, selector: #selector(pageChanged),
                                                    name: .PDFViewPageChanged, object: view)
+            NotificationCenter.default.addObserver(self, selector: #selector(reassertToolPicker),
+                                                   name: .PDFViewScaleChanged, object: view)
             pageChanged()
             // PDFView 안쪽 스크롤뷰를 찾아 스크롤 방향 감시
             DispatchQueue.main.async { [weak self] in
@@ -232,11 +236,24 @@ struct PDFNoteView: UIViewRepresentable {
                 self.offsetObs = sv.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
                     guard let self else { return }
                     let y = sv.contentOffset.y
+                    let minY = -sv.adjustedContentInset.top
+                    let maxY = max(minY, sv.contentSize.height - sv.bounds.height + sv.adjustedContentInset.bottom)
+                    // 손가락으로 끌고 있을 때만 판정 (바 전환으로 인한 재배치·관성·튕김은 무시)
+                    guard sv.isTracking else { self.lastY = y; return }
+                    // 위/아래 끝을 넘어간 고무줄 구간은 무시
+                    if y < minY || y > maxY { self.lastY = y; return }
                     let dy = y - self.lastY
                     if abs(dy) < 12 { return }
                     self.lastY = y
-                    let atTop = y <= -sv.adjustedContentInset.top + 4
-                    self.onScrollHide(atTop ? false : dy > 0)
+                    // 방금 바꿨으면 잠깐 다시 안 바꿈
+                    let now = CACurrentMediaTime()
+                    if now - self.lastToggle < 0.35 { return }
+                    let hide = (y <= minY + 4) ? false : dy > 0
+                    if hide != self.barHidden {
+                        self.barHidden = hide
+                        self.lastToggle = now
+                        self.onScrollHide(hide)
+                    }
                 }
             }
         }
@@ -251,6 +268,26 @@ struct PDFNoteView: UIViewRepresentable {
             guard let view = pdfView, let doc = view.document,
                   let cur = view.currentPage else { return }
             onPage(doc.index(for: cur), doc.pageCount)
+            reassertToolPicker()
+        }
+
+        /// 줌/재배치로 캔버스가 바뀌면 first responder가 빠져 도구 팔레트가 사라짐.
+        /// 화면에 붙어 있는 현재 페이지 캔버스에 다시 붙여 줌.
+        @objc func reassertToolPicker() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let view = self.pdfView, let doc = view.document else { return }
+                let cur = view.currentPage.map { doc.index(for: $0) }
+                let target = cur.flatMap { self.canvases[$0] }.flatMap { $0.window != nil ? $0 : nil }
+                    ?? self.canvases.values.first { $0.window != nil }
+                guard let canvas = target else { return }
+                if !canvas.isFirstResponder {
+                    self.toolPicker.setVisible(true, forFirstResponder: canvas)
+                    self.toolPicker.addObserver(canvas)
+                    if !canvas.becomeFirstResponder() {
+                        AppLog.shared.warn("필기 도구 다시 붙이기 실패")
+                    }
+                }
+            }
         }
 
         var notesDir: URL {
@@ -303,8 +340,8 @@ struct PDFNoteView: UIViewRepresentable {
             }
             toolPicker.setVisible(true, forFirstResponder: canvas)
             toolPicker.addObserver(canvas)
-            canvas.becomeFirstResponder()
             canvases[index] = canvas
+            reassertToolPicker()
             return canvas
         }
 
@@ -315,6 +352,7 @@ struct PDFNoteView: UIViewRepresentable {
             save(canvas, page: index)
             toolPicker.removeObserver(canvas)
             canvases[index] = nil
+            reassertToolPicker()
         }
     }
 }
