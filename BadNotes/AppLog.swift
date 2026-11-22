@@ -26,9 +26,9 @@ final class AppLog {
     var latestError: Entry?
     var unreadErrors = 0
 
-    func info(_ msg: String)  { add(.info, msg) }
-    func warn(_ msg: String)  { add(.warn, msg) }
-    func error(_ msg: String) { add(.error, msg) }
+    func info(_ msg: LocalizedStringResource)  { add(.info, String(localized: msg)) }
+    func warn(_ msg: LocalizedStringResource)  { add(.warn, String(localized: msg)) }
+    func error(_ msg: LocalizedStringResource) { add(.error, String(localized: msg)) }
 
     private func add(_ level: Level, _ msg: String) {
         let e = Entry(level: level, message: msg)

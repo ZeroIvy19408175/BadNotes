@@ -13,94 +13,119 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State private var pdfURL: URL?
-    @State private var showImporter = false
     @State private var showLog = false
-    @State private var barHidden = false
     @State private var page = 0
     @State private var pageCount = 0
     @State private var jumpTarget: Int?
     @State private var showJump = false
+    @State private var shareURL: URL?
     @State private var jumpText = ""
     var log = AppLog.shared
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let url = pdfURL {
-                    PDFNoteView(url: url,
-                                jumpTarget: $jumpTarget,
-                                onPage: { p, c in page = p; pageCount = c },
-                                onScrollHide: { hide in
-                                    if hide != barHidden {
-                                        withAnimation(.easeInOut(duration: 0.2)) { barHidden = hide }
-                                    }
-                                })
-                        .id(url)
-                        .ignoresSafeArea(edges: .bottom)
-                } else {
-                    ContentUnavailableView("PDF를 열어 주세요",
-                                           systemImage: "doc.richtext",
-                                           description: Text("오른쪽 위 '열기'를 누르세요"))
-                }
+        if let url = pdfURL {
+            editor(url)
+        } else {
+            DocBrowser(onOpen: { open($0) })
+                .ignoresSafeArea()
+        }
+    }
+
+    func editor(_ url: URL) -> some View {
+        ZStack(alignment: .top) {
+            PDFNoteView(url: url, jumpTarget: $jumpTarget,
+                        onPage: { p, c in page = p; pageCount = c })
+                .id(url.path)
+                .ignoresSafeArea(edges: .top)
+            topBar(url)
+        }
+        .overlay(alignment: .bottom) { errorBanner }
+        .sheet(isPresented: $showLog) { LogView() }
+        .sheet(isPresented: Binding(get: { shareURL != nil }, set: { if !$0 { shareURL = nil } })) {
+            if let u = shareURL { ShareSheet(url: u) }
+        }
+        .alert("페이지 이동", isPresented: $showJump) {
+            TextField("1 ~ \(pageCount)", text: $jumpText).keyboardType(.numberPad)
+            Button("이동") {
+                if let n = Int(jumpText), (1...pageCount).contains(n) { jumpTarget = n - 1 }
+                else { log.warn("잘못된 페이지 번호: \(jumpText)") }
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar(barHidden ? .hidden : .visible, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button { showLog = true } label: {
-                        Image(systemName: log.unreadErrors > 0
-                              ? "exclamationmark.triangle.fill" : "ladybug")
-                            .foregroundStyle(log.unreadErrors > 0 ? .red : .accentColor)
-                    }
-                    .accessibilityLabel("로그")
+            Button("취소", role: .cancel) {}
+        }
+    }
+
+    /// 44pt 터치 영역, 아이콘 18pt (HIG 최소 44x44)
+    func icon(_ name: String, tint: Color = .primary, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: name)
+                .font(.system(size: 18))
+                .foregroundStyle(tint)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+    }
+
+    func capsule<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        HStack(spacing: 0) { content() }
+            .padding(.horizontal, 6)
+            .background(.ultraThinMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+    }
+
+    func topBar(_ url: URL) -> some View {
+        HStack(spacing: 12) {
+            capsule {
+                icon("arrow.down.right.and.arrow.up.left") {
+                    NotificationCenter.default.post(name: .badNotesSaveAll, object: nil)
+                    pdfURL = nil
                 }
-                ToolbarItem(placement: .principal) {
-                    // 제목 영역: 파일 이름 + 페이지. 누르면 페이지 이동
+                icon("arrow.uturn.backward.circle") { NotificationCenter.default.post(name: .badNotesUndo, object: nil) }
+                icon("arrow.uturn.forward.circle") { NotificationCenter.default.post(name: .badNotesRedo, object: nil) }
+            }
+            Spacer(minLength: 0)
+            Button {
+                guard pageCount > 0 else { return }
+                jumpText = ""; showJump = true
+            } label: {
+                VStack(spacing: 0) {
+                    Text(url.deletingPathExtension().lastPathComponent).font(.subheadline.bold()).lineLimit(1)
+                    if pageCount > 0 {
+                        Text("\(page + 1) / \(pageCount) 쪽").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 18)
+                .frame(minHeight: 44)
+                .frame(maxWidth: 320)
+                .background(.ultraThinMaterial, in: Capsule())
+                .shadow(color: .black.opacity(0.15), radius: 6, y: 2)
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+            capsule {
+                icon("square.and.arrow.up") { shareURL = NoteTools.export(url) }
+                icon("pencil.tip.crop.circle") { NotificationCenter.default.post(name: .badNotesTogglePicker, object: nil) }
+                Menu {
+                    Button { showLog = true } label: { Label("로그", systemImage: "ladybug") }
                     Button {
                         guard pageCount > 0 else { return }
-                        jumpText = ""
-                        showJump = true
-                    } label: {
-                        VStack(spacing: 0) {
-                            Text(pdfURL?.deletingPathExtension().lastPathComponent ?? "BadNotes")
-                                .font(.headline).lineLimit(1)
-                            if pageCount > 0 {
-                                Text("\(page + 1) / \(pageCount) 쪽")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
+                        jumpText = ""; showJump = true
+                    } label: { Label("페이지 이동", systemImage: "arrow.right.doc.on.clipboard") }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(log.unreadErrors > 0 ? Color.red : Color.primary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("열기") { showImporter = true }
-                }
-            }
-            .alert("페이지 이동", isPresented: $showJump) {
-                TextField("1 ~ \(pageCount)", text: $jumpText).keyboardType(.numberPad)
-                Button("이동") {
-                    if let n = Int(jumpText), (1...pageCount).contains(n) {
-                        jumpTarget = n - 1
-                    } else {
-                        log.warn("잘못된 페이지 번호: \(jumpText)")
-                    }
-                }
-                Button("취소", role: .cancel) {}
-            }
-            .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.pdf]) { result in
-                open(result)
-            }
-            .sheet(isPresented: $showLog) { LogView() }
-            .overlay(alignment: .bottom) { errorBanner }
-            // 바가 숨었을 때 화면 위쪽을 탭하면 다시 보이게
-            .overlay(alignment: .top) {
-                if barHidden {
-                    Color.clear.frame(height: 24).contentShape(Rectangle())
-                        .onTapGesture { withAnimation { barHidden = false } }
+                icon("square.and.pencil") {
+                    NotificationCenter.default.post(name: .badNotesSaveAll, object: nil)
+                    if let n = NoteTools.newNote() { pdfURL = n }
                 }
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder var errorBanner: some View {
@@ -120,35 +145,21 @@ struct ContentView: View {
             .padding(12)
             .background(.red.gradient, in: RoundedRectangle(cornerRadius: 14))
             .padding()
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(.spring, value: e.id)
         }
     }
 
-    func open(_ result: Result<URL, Error>) {
-        switch result {
-        case .failure(let err):
-            log.error("파일 선택 실패: \(err.localizedDescription)")
-        case .success(let src):
-            let ok = src.startAccessingSecurityScopedResource()
-            defer { if ok { src.stopAccessingSecurityScopedResource() } }
-            if !ok { log.warn("보안 범위 접근 실패(계속 시도): \(src.lastPathComponent)") }
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let dst = docs.appendingPathComponent(src.lastPathComponent)
-            if FileManager.default.fileExists(atPath: dst.path) {
-                log.info("기존 복사본 사용: \(dst.lastPathComponent)")
-            } else {
-                do {
-                    try FileManager.default.copyItem(at: src, to: dst)
-                    log.info("앱 폴더로 복사함: \(dst.lastPathComponent)")
-                } catch {
-                    log.error("PDF 복사 실패: \(error.localizedDescription)")
-                    return
-                }
-            }
-            barHidden = false
-            pdfURL = dst
+    /// 앱 Documents 안이면 그대로, 밖이면 한 번 복사(원본 불변)
+    func open(_ src: URL) {
+        let ok = src.startAccessingSecurityScopedResource()
+        defer { if ok { src.stopAccessingSecurityScopedResource() } }
+        let docs = NoteTools.docs.resolvingSymlinksInPath().path
+        if src.resolvingSymlinksInPath().path.hasPrefix(docs + "/") { pdfURL = src; return }
+        let dst = NoteTools.docs.appendingPathComponent(src.lastPathComponent)
+        if !FileManager.default.fileExists(atPath: dst.path) {
+            do { try FileManager.default.copyItem(at: src, to: dst); log.info("앱 폴더로 복사함: \(dst.lastPathComponent)") }
+            catch { log.error("PDF 복사 실패: \(error.localizedDescription)"); return }
         }
+        pdfURL = dst
     }
 }
 
@@ -156,16 +167,16 @@ struct PDFNoteView: UIViewRepresentable {
     let url: URL
     @Binding var jumpTarget: Int?
     var onPage: (Int, Int) -> Void
-    var onScrollHide: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(pdfURL: url, onPage: onPage, onScrollHide: onScrollHide)
+        Coordinator(pdfURL: url, onPage: onPage)
     }
 
     func makeUIView(context: Context) -> PDFView {
         let c = context.coordinator
         let view = PDFView()
         view.autoScales = true
+        view.backgroundColor = .systemGroupedBackground
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.pageOverlayViewProvider = c
@@ -195,20 +206,21 @@ struct PDFNoteView: UIViewRepresentable {
     final class Coordinator: NSObject, PDFPageOverlayViewProvider {
         let pdfURL: URL
         let onPage: (Int, Int) -> Void
-        let onScrollHide: (Bool) -> Void
         let toolPicker = PKToolPicker()
         weak var pdfView: PDFView?
         var canvases: [Int: PKCanvasView] = [:]
         private var offsetObs: NSKeyValueObservation?
-        private var lastY: CGFloat = 0
-        private var lastToggle: CFTimeInterval = 0
-        private var barHidden = false
 
-        init(pdfURL: URL, onPage: @escaping (Int, Int) -> Void, onScrollHide: @escaping (Bool) -> Void) {
+        init(pdfURL: URL, onPage: @escaping (Int, Int) -> Void) {
             self.pdfURL = pdfURL
             self.onPage = onPage
-            self.onScrollHide = onScrollHide
             super.init()
+            let nc = NotificationCenter.default
+            nc.addObserver(self, selector: #selector(undo), name: .badNotesUndo, object: nil)
+            nc.addObserver(self, selector: #selector(redo), name: .badNotesRedo, object: nil)
+            nc.addObserver(self, selector: #selector(togglePicker), name: .badNotesTogglePicker, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(saveAllNow),
+                                                   name: .badNotesSaveAll, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(saveAllNow),
                                                    name: UIApplication.willResignActiveNotification,
                                                    object: nil)
@@ -226,36 +238,59 @@ struct PDFNoteView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(reassertToolPicker),
                                                    name: .PDFViewScaleChanged, object: view)
             pageChanged()
-            // PDFView 안쪽 스크롤뷰를 찾아 스크롤 방향 감시
             DispatchQueue.main.async { [weak self] in
                 guard let self, let sv = self.findScrollView(in: view) else {
-                    AppLog.shared.warn("스크롤뷰를 못 찾아 상단바 자동 숨김이 꺼짐")
+                    AppLog.shared.warn("스크롤뷰를 못 찾아 쪽 추가 당기기가 꺼짐")
                     return
                 }
-                self.lastY = sv.contentOffset.y
+                // 캡슐 줄 밑으로 스크롤되되 1쪽 위쪽은 가리지 않게 상단 여백
+                let top = 60 + (view.window?.safeAreaInsets.top ?? 0)
+                sv.contentInset.top = top
+                sv.verticalScrollIndicatorInsets.top = top
+                sv.contentOffset.y = -top
                 self.offsetObs = sv.observe(\.contentOffset, options: [.new]) { [weak self] sv, _ in
                     guard let self else { return }
-                    let y = sv.contentOffset.y
-                    let minY = -sv.adjustedContentInset.top
-                    let maxY = max(minY, sv.contentSize.height - sv.bounds.height + sv.adjustedContentInset.bottom)
-                    // 손가락으로 끌고 있을 때만 판정 (바 전환으로 인한 재배치·관성·튕김은 무시)
-                    guard sv.isTracking else { self.lastY = y; return }
-                    // 위/아래 끝을 넘어간 고무줄 구간은 무시
-                    if y < minY || y > maxY { self.lastY = y; return }
-                    let dy = y - self.lastY
-                    if abs(dy) < 12 { return }
-                    self.lastY = y
-                    // 방금 바꿨으면 잠깐 다시 안 바꿈
-                    let now = CACurrentMediaTime()
-                    if now - self.lastToggle < 0.35 { return }
-                    let hide = (y <= minY + 4) ? false : dy > 0
-                    if hide != self.barHidden {
-                        self.barHidden = hide
-                        self.lastToggle = now
-                        self.onScrollHide(hide)
+                    let maxY = max(-sv.adjustedContentInset.top,
+                                   sv.contentSize.height - sv.bounds.height + sv.adjustedContentInset.bottom)
+                    if sv.isTracking {
+                        if sv.contentOffset.y > maxY + 80 { self.armed = true }
+                    } else if self.armed {
+                        self.armed = false
+                        let now = CACurrentMediaTime()
+                        if now - self.lastAdd > 1.5 { self.lastAdd = now; self.addPage() }
                     }
                 }
             }
+        }
+
+        func addPage() {
+            guard pdfURL.lastPathComponent.hasPrefix("새노트-") else {
+                AppLog.shared.info("가져온 PDF에는 쪽을 추가하지 않음")
+                return
+            }
+            guard let doc = pdfView?.document else { return }
+            saveAll()
+            if NoteTools.appendPage(doc, url: pdfURL) {
+                AppLog.shared.info("쪽 추가: \(doc.pageCount)쪽")
+                onPage(pdfView?.currentPage.map { doc.index(for: $0) } ?? 0, doc.pageCount)
+            }
+        }
+
+        var armed = false
+        var lastAdd: CFTimeInterval = 0
+        var pickerOn = true
+
+        func currentCanvas() -> PKCanvasView? {
+            guard let view = pdfView, let doc = view.document else { return nil }
+            let cur = view.currentPage.map { doc.index(for: $0) }
+            return cur.flatMap { canvases[$0] }
+        }
+        @objc func undo() { currentCanvas()?.undoManager?.undo() }
+        @objc func redo() { currentCanvas()?.undoManager?.redo() }
+        @objc func togglePicker() {
+            pickerOn.toggle()
+            if pickerOn { reassertToolPicker() }
+            else if let c = currentCanvas() { toolPicker.setVisible(false, forFirstResponder: c); c.resignFirstResponder() }
         }
 
         func findScrollView(in v: UIView) -> UIScrollView? {
@@ -275,7 +310,7 @@ struct PDFNoteView: UIViewRepresentable {
         /// 화면에 붙어 있는 현재 페이지 캔버스에 다시 붙여 줌.
         @objc func reassertToolPicker() {
             DispatchQueue.main.async { [weak self] in
-                guard let self, let view = self.pdfView, let doc = view.document else { return }
+                guard let self, self.pickerOn, let view = self.pdfView, let doc = view.document else { return }
                 let cur = view.currentPage.map { doc.index(for: $0) }
                 let target = cur.flatMap { self.canvases[$0] }.flatMap { $0.window != nil ? $0 : nil }
                     ?? self.canvases.values.first { $0.window != nil }
@@ -338,7 +373,7 @@ struct PDFNoteView: UIViewRepresentable {
                     AppLog.shared.error("필기 불러오기 실패 (\(index + 1)쪽): \(error.localizedDescription)")
                 }
             }
-            toolPicker.setVisible(true, forFirstResponder: canvas)
+            toolPicker.setVisible(pickerOn, forFirstResponder: canvas)
             toolPicker.addObserver(canvas)
             canvases[index] = canvas
             reassertToolPicker()

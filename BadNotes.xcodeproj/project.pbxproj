@@ -86,10 +86,11 @@
 				};
 			};
 			buildConfigurationList = 8926DBCC30B2BEEF00DE5811 /* Build configuration list for PBXProject "BadNotes" */;
-			developmentRegion = en;
+			developmentRegion = ko;
 			hasScannedForEncodings = 0;
 			knownRegions = (
-				en,
+				ko,
+				"en-GB",
 				Base,
 			);
 			mainGroup = 8926DBC830B2BEEF00DE5811;
@@ -254,6 +255,7 @@
 				DEVELOPMENT_TEAM = BK46B4J35C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Extra-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -286,6 +288,7 @@
 				DEVELOPMENT_TEAM = BK46B4J35C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Extra-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
